@@ -3,7 +3,6 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from phonenumber_field.modelfields import PhoneNumberField
-from django.core.validators import MinValueValidator, MaxValueValidator
 import string
 import random
 from django.db.models.signals import post_save
@@ -13,7 +12,6 @@ from django.dispatch import receiver
 class User(AbstractUser):
     """
     Custom user model: phone-first identity for mobile-money-first Africa.
-    Overrides groups & user_permissions to prevent reverse accessor clash.
     """
     username = None
     email = models.EmailField(_("email address"), blank=True, null=True)
@@ -58,20 +56,18 @@ class User(AbstractUser):
     )
     loyalty_points_balance = models.PositiveIntegerField(default=0)
     loyalty_points_expiry = models.DateTimeField(null=True, blank=True)
-    # === CRITICAL FIX: Override to avoid clash with auth.User ===
+
+    # Override to prevent reverse accessor clash with auth.User
     groups = models.ManyToManyField(
         Group,
-        related_name="custom_user_set",  # Unique name prevents clash
-        related_query_name="user",
+        related_name="custom_user_set",
         blank=True,
         help_text=_("The groups this user belongs to."),
         verbose_name=_("groups"),
     )
-
     user_permissions = models.ManyToManyField(
         Permission,
-        related_name="custom_user_set",  # Unique name prevents clash
-        related_query_name="user",
+        related_name="custom_user_set",
         blank=True,
         help_text=_("Specific permissions for this user."),
         verbose_name=_("user permissions"),
@@ -85,7 +81,7 @@ class User(AbstractUser):
 
     def __str__(self):
         return str(self.phone_number)
-    
+
     def redeem_points(self, points_to_redeem, cart_total):
         if points_to_redeem > self.loyalty_points_balance:
             raise ValueError("Insufficient points")
@@ -96,20 +92,22 @@ class User(AbstractUser):
         self.loyalty_points_balance -= discount
         self.save(update_fields=['loyalty_points_balance'])
         return discount
-    
-    @receiver(post_save, sender=User)
-    def generate_referral_code(sender, instance, created, **kwargs):
-        if created and not instance.referral_code:
-            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-            while User.objects.filter(referral_code=code).exists():
-                code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        instance.referral_code = code
-        instance.save(update_fields=['referral_code'])
 
     class Meta:
         verbose_name = _("user")
         verbose_name_plural = _("users")
         ordering = ["-created_at"]
+
+
+# Signal moved OUTSIDE class — critical fix
+@receiver(post_save, sender=User)
+def generate_referral_code(sender, instance, created, **kwargs):
+    if created and not instance.referral_code:
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        while User.objects.filter(referral_code=code).exists():
+            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        instance.referral_code = code
+        instance.save(update_fields=['referral_code'])
 
 
 class Address(models.Model):
@@ -142,11 +140,7 @@ class BuyerProfile(models.Model):
         Address, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
     )
     wishlist_count = models.PositiveIntegerField(default=0)
-
-    notification_preferences = models.JSONField(
-        default=dict,
-        help_text=_("e.g. {'sms': true, 'push': true, 'whatsapp': false}")
-    )
+    notification_preferences = models.JSONField(default=dict)
     total_refunds_received = models.PositiveIntegerField(default=0)
     dispute_count = models.PositiveIntegerField(default=0)
 
@@ -166,13 +160,12 @@ class SellerProfile(models.Model):
         default="basic"
     )
     suspended_until = models.DateField(null=True, blank=True)
-
     preferred_payout_method = models.CharField(
         max_length=50,
         choices=[("mpesa", "M-Pesa"), ("tigo_pesa", "Tigo Pesa"), ("bank", "Bank Transfer")],
         default="mpesa"
     )
-    payout_account_details = models.CharField(max_length=255, blank=True)  # Encrypt in production
+    payout_account_details = models.CharField(max_length=255, blank=True)
 
     kyc_status = models.CharField(
         max_length=20,
@@ -197,7 +190,7 @@ class SellerProfile(models.Model):
             bool(self.business_license_number) and
             (self.business_license_expiry is None or self.business_license_expiry >= timezone.now().date())
         )
-    
+
     def calculate_visibility_score(self):
         on_time = self.on_time_delivery_rate or 0
         accuracy = 100 - (self.total_refunds_issued / max(self.total_orders, 1) * 100)
@@ -205,13 +198,12 @@ class SellerProfile(models.Model):
         score = (on_time * 0.5) + (accuracy * 0.3) + (rating * 0.2)
         self.visibility_score = min(max(score, 0), 100)
         self.save(update_fields=['visibility_score'])
-        
+
     def __str__(self):
         return f"Seller: {self.business_name or self.user.phone_number}"
 
 
 class SellerKYCDocument(models.Model):
-
     DOCUMENT_TYPES = [
         ("brela_certificate", "BRELA Certificate / Business License"),
         ("tin_certificate", "TIN / Tax Certificate"),

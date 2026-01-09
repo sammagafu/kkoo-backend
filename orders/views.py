@@ -5,9 +5,9 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
 from django.core.exceptions import ValidationError
-from apps.cart.models import Cart
-from apps.cart.utils import apply_loyalty_points
-from apps.cart.views import CartDetailView  # Reuse incentive logic
+from cart.models import Cart
+from cart.utils import apply_loyalty_points
+from cart.views import CartDetailView  # Reuse incentive logic
 from .models import Order, OrderItem, Delivery
 from .serializers import OrderListSerializer, OrderDetailSerializer
 
